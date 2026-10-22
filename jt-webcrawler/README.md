@@ -18,11 +18,11 @@ out-<host>/html/          only with --save-html
 
 ## Install (any Linux machine, x86_64 or ARM64 such as GB10)
 
-Download the release zip, unpack it, and run the installer. Rerunning it is safe: it skips what is already in place and repairs what is broken.
+Download the zip from the repo's `releases/` folder, unpack it, and run the installer. Rerunning it is safe: it skips what is already in place and repairs what is broken.
 
 ```bash
 VER=1.1.0
-cd ~ && curl -fLO https://github.com/JTatDell/turbo-octo-couscous/releases/download/v$VER/jt-webcrawler-$VER.zip
+cd ~ && curl -fLO https://github.com/JTatDell/turbo-octo-couscous/raw/main/releases/jt-webcrawler-$VER.zip
 unzip -o jt-webcrawler-$VER.zip && bash jt-webcrawler-$VER/install.sh
 ```
 
