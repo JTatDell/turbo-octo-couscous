@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+# jt-webcrawler installer. Idempotent: safe to rerun to repair or upgrade.
+#
+#   bash install.sh [--prefix DIR] [--bin-dir DIR] [--no-system-deps]
+#
+# Result:
+#   <prefix>/                 tool files + private virtualenv (.venv)
+#   <bin-dir>/jt-webcrawler   launcher, so "jt-webcrawler --url ... --email ..." works from any folder
+#
+# Defaults: prefix=$HOME/jt-webcrawler, bin-dir=$HOME/.local/bin
+# sudo is used only if missing OS packages must be installed (python3-venv, Chromium libraries).
+# --no-system-deps forbids sudo; the installer then stops and tells you what is missing.
+set -euo pipefail
+
+PREFIX="${HOME}/jt-webcrawler"
+BIN_DIR="${HOME}/.local/bin"
+SYSTEM_DEPS=1
+MIN_PY="3.9"
+FILES=(jt-webcrawler.py requirements.txt README.md install.sh VERSION)
+
+usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; }
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --prefix) PREFIX="$2"; shift 2 ;;
+    --bin-dir) BIN_DIR="$2"; shift 2 ;;
+    --no-system-deps) SYSTEM_DEPS=0; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+say()  { printf '\033[1m==>\033[0m %s\n' "$*"; }
+ok()   { printf '    ok: %s\n' "$*"; }
+die()  { printf '\033[31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
+
+SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+mkdir -p "$PREFIX" "$BIN_DIR"
+PREFIX="$(cd "$PREFIX" && pwd -P)"
+VERSION="$(cat "$SRC_DIR/VERSION" 2>/dev/null || echo unknown)"
+VENV="$PREFIX/.venv"
+VPY="$VENV/bin/python"
+
+say "jt-webcrawler $VERSION -> $PREFIX  ($(uname -s) $(uname -m), host $(hostname))"
+
+# 1. Source files present?
+for f in "${FILES[@]}"; do [[ -f "$SRC_DIR/$f" ]] || die "package incomplete: $SRC_DIR/$f missing. Re-extract the zip."; done
+ok "package files present"
+
+# 2. Python version
+command -v python3 >/dev/null || die "python3 not found. Install it (Ubuntu: sudo apt-get install -y python3)."
+python3 -c "import sys; sys.exit(0 if sys.version_info >= tuple(map(int, '$MIN_PY'.split('.'))) else 1)" \
+  || die "python3 >= $MIN_PY required, found $(python3 -V 2>&1)"
+ok "$(python3 -V 2>&1)"
+
+sudo_run() {
+  [[ $SYSTEM_DEPS -eq 1 ]] || die "needs OS packages but --no-system-deps was given: $*"
+  if [[ $EUID -eq 0 ]]; then "$@"; else sudo "$@"; fi
+}
+
+# 3. venv support (Debian/Ubuntu split ensurepip into python3-venv)
+if ! python3 -c "import venv, ensurepip" 2>/dev/null; then
+  say "python3 venv support missing; installing python3-venv"
+  command -v apt-get >/dev/null || die "install your distro's python3 venv package, then rerun."
+  PYVER="$(python3 -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")')"
+  sudo_run apt-get update -qq
+  sudo_run apt-get install -y -qq python3-venv "python${PYVER}-venv" || sudo_run apt-get install -y -qq python3-venv
+fi
+ok "venv support"
+
+# 4. Copy files (skip when running from the install dir itself). Crawl output in PREFIX is never touched.
+if [[ "$SRC_DIR" != "$PREFIX" ]]; then
+  for f in "${FILES[@]}"; do install -m 0644 "$SRC_DIR/$f" "$PREFIX/$f"; done
+  chmod 0755 "$PREFIX/jt-webcrawler.py" "$PREFIX/install.sh"
+  ok "files copied"
+else
+  ok "running in place; files already installed"
+fi
+
+# 5. Virtualenv: create, or recreate if broken or built on a different Python
+SYS_PYVER="$(python3 -c 'import sys; print(sys.version_info[:2])')"
+if [[ -x "$VPY" ]] && [[ "$("$VPY" -c 'import sys; print(sys.version_info[:2])' 2>/dev/null || true)" == "$SYS_PYVER" ]]; then
+  ok "virtualenv exists"
+else
+  say "creating virtualenv"
+  rm -rf "$VENV"
+  python3 -m venv "$VENV"
+fi
+
+# 6. Python packages (no-op when already satisfied)
+say "installing Python packages"
+"$VPY" -m pip install --disable-pip-version-check -q -r "$PREFIX/requirements.txt"
+ok "$("$VPY" -m pip show playwright 2>/dev/null | awk '/^Version/{print "playwright " $2}')"
+
+# 7. Chromium: download browser if needed, add OS libraries only if it still cannot launch
+chromium_ok() {
+  "$VPY" - <<'PY' >/dev/null 2>&1
+import os
+from playwright.sync_api import sync_playwright
+kw = {"headless": True}
+if os.environ.get("CHROMIUM_PATH"):
+    kw["executable_path"] = os.environ["CHROMIUM_PATH"]
+with sync_playwright() as p:
+    b = p.chromium.launch(**kw); pg = b.new_page(); pg.set_content("<p>ok</p>"); pg.pdf(); b.close()
+PY
+}
+if chromium_ok; then
+  ok "headless Chromium launches and prints PDF"
+else
+  say "installing Playwright Chromium"
+  "$VPY" -m playwright install chromium \
+    || die "Chromium download failed. Check this machine can reach cdn.playwright.dev / playwright.download.prss.microsoft.com (proxy?), then rerun install.sh."
+  if ! chromium_ok; then
+    say "installing Chromium OS libraries (sudo)"
+    sudo_run "$VPY" -m playwright install-deps chromium
+  fi
+  chromium_ok || die "Chromium still cannot launch. Run: $VPY -m playwright install --with-deps chromium"
+  ok "headless Chromium launches and prints PDF"
+fi
+
+# 8. Launcher on PATH
+LAUNCHER="$BIN_DIR/jt-webcrawler"
+cat > "$LAUNCHER.tmp" <<EOF
+#!/usr/bin/env bash
+# generated by jt-webcrawler install.sh $VERSION
+exec "$VPY" "$PREFIX/jt-webcrawler.py" "\$@"
+EOF
+chmod 0755 "$LAUNCHER.tmp" && mv -f "$LAUNCHER.tmp" "$LAUNCHER"
+ok "launcher $LAUNCHER"
+
+# 9. Self-test
+"$LAUNCHER" --help >/dev/null || die "launcher self-test failed"
+ok "self-test passed"
+
+echo
+say "installed jt-webcrawler $VERSION"
+case ":$PATH:" in
+  *":$BIN_DIR:"*) echo "    run: jt-webcrawler --url https://www.example.com/ --email you@example.com" ;;
+  *) echo "    $BIN_DIR is not on PATH in this shell. Either open a new login shell, or run:"
+     echo "      echo 'export PATH=\"$BIN_DIR:\$PATH\"' >> ~/.bashrc && source ~/.bashrc"
+     echo "    or call it directly: $LAUNCHER --url ... --email ..." ;;
+esac
+echo "    output goes to ./out-<host> under the folder you run it from (or --out DIR)"
