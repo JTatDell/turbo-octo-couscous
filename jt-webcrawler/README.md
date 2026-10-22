@@ -5,7 +5,7 @@ Crawls the public pages of one website, renders each HTML page to a PDF with hea
 Two arguments are required:
 
 - `--url` is the start URL of the target site. The crawl stays on that host.
-- `--email` is the contact address. It is sent in every request as `User-Agent: jt-webcrawler/1.0 (+mailto:<email>)` so site operators can reach you.
+- `--email` is the contact address. It is sent in every request as `User-Agent: jt-webcrawler/<VERSION> (+mailto:<email>)` so site operators can reach you.
 
 ## Output layout
 
@@ -16,25 +16,44 @@ out-<host>/frontier.txt   links not yet visited (lets an interrupted run resume)
 out-<host>/html/          only with --save-html
 ```
 
-## Run in a Claude Code cloud session
+## Install (any Linux machine, x86_64 or ARM64 such as GB10)
 
-The environment must allow the target host. In the session title bar, open the cloud environment menu, choose Edit, and add the host (for IRMI, `www.irmi.com`) under Allowed domains with "Allow package managers" left ticked. Docs: https://code.claude.com/docs/en/cloud-environments#network-access
-
-```bash
-pip install playwright
-python3 jt-webcrawler.py --url https://www.irmi.com/ --email jeff.tang@dell.com \
-  --max-pages 300 --delay 1.5 --chromium /opt/pw-browsers/chromium
-```
-
-## Run locally (laptop, or the GB10 itself)
+Download the release zip, unpack it, and run the installer. Rerunning it is safe: it skips what is already in place and repairs what is broken.
 
 ```bash
-python3 -m venv .venv && . .venv/bin/activate
-pip install -r requirements.txt
-playwright install chromium          # on Linux also: playwright install-deps chromium
-python3 jt-webcrawler.py --url https://www.irmi.com/ --email jeff.tang@dell.com \
-  --max-pages 300 --delay 1.5
+VER=1.1.0
+cd ~ && curl -fLO https://github.com/JTatDell/turbo-octo-couscous/releases/download/v$VER/jt-webcrawler-$VER.zip
+unzip -o jt-webcrawler-$VER.zip && bash jt-webcrawler-$VER/install.sh
 ```
+
+The installer puts the tool and a private virtualenv in `~/jt-webcrawler` and a `jt-webcrawler` command in `~/.local/bin`. It uses sudo only when OS packages are missing: `python3-venv`, or the libraries Chromium needs. Options: `--prefix DIR`, `--bin-dir DIR`, `--no-system-deps`.
+
+To install on several machines from one workstation (`-t` lets the sudo prompt through):
+
+```bash
+for h in promaxgb10-faea promaxgb10-4ade; do
+  scp jt-webcrawler-1.1.0.zip "$h":~ && ssh -t "$h" 'unzip -o jt-webcrawler-1.1.0.zip && bash jt-webcrawler-1.1.0/install.sh'
+done
+```
+
+Uninstall: `rm -rf ~/jt-webcrawler ~/.local/bin/jt-webcrawler`. Crawl output lives wherever you ran the tool, not in the install folder.
+
+## Run
+
+```bash
+cd ~/corpora      # any folder; output goes to ./out-<host>
+jt-webcrawler --url https://www.irmi.com/ --email jeff.tang@dell.com --max-pages 300 --delay 1.5
+```
+
+In a Claude Code cloud session, the environment's network policy must allow the target host and `cdn.playwright.dev`. Docs: https://code.claude.com/docs/en/cloud-environments#network-access
+
+## Build the zip (maintainers)
+
+```bash
+jt-webcrawler/build-zip.sh      # writes dist/jt-webcrawler-<VERSION>.zip and .sha256
+```
+
+Bump `VERSION` first. It feeds the zip name, the installer banner, and the User-Agent.
 
 ## Flags
 

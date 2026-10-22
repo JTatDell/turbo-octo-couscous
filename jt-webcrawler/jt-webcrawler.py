@@ -37,7 +37,11 @@ import requests
 from playwright.sync_api import sync_playwright
 
 TOOL_NAME = "jt-webcrawler"
-TOOL_VERSION = "1.0"
+try:  # single source of truth: VERSION file shipped next to this script
+    with open(os.path.join(os.path.dirname(os.path.realpath(__file__)), "VERSION"), encoding="utf-8") as _vf:
+        TOOL_VERSION = _vf.read().strip() or "unknown"
+except OSError:
+    TOOL_VERSION = "unknown"
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 SKIP_EXT = re.compile(
