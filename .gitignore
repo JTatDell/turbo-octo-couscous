@@ -1,0 +1,5 @@
+# crawl output (default --out is ./out-<host>)
+out-*/
+.venv/
+__pycache__/
+*.pyc
